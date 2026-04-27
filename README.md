@@ -250,7 +250,7 @@ Users are responsible for complying with applicable laws and regulations.
 
 ---
 
-## 👤 Author
+## 👤 Author: D8v1d777
 
 Built for modern OSINT analysts who value:
 

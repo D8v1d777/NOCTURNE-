@@ -1,0 +1,15 @@
+# Binaries and executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+nocturne
+
+# Logs and temporary files
+*.log
+correlation_feedback.json
+
+# Frontend dependencies
+node_modules/
+dist/

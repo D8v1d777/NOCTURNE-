@@ -1,0 +1,16 @@
+# NOCTURNE Global Configuration
+
+settings:
+  workers: 15
+  timeout: 10s
+  user_agent: "NocturneScanner/1.0 (Professional OSINT Tool)"
+
+monitoring:
+  interval: "1h"
+  cooldown: "24h"
+  log_file: "alerts.log"
+  targets:
+    - "shadow_coder"
+
+api_keys:
+  github: ""
