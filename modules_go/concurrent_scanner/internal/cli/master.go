@@ -1,4 +1,4 @@
-package distribution
+package cli
 
 import (
 	"encoding/json"

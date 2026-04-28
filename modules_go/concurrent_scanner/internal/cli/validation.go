@@ -1,9 +1,8 @@
-package validation
+package cli
 
 import (
 	"fmt"
 	"nocturne/scanner/internal/correlation"
-	"nocturne/scanner/internal/monitoring"
 	"time"
 )
 
@@ -105,7 +104,7 @@ func testStress(nodeCount int) time.Duration {
 
 func testAlertSystem() bool {
 	// Initialize Alert Manager with a very short cooldown for testing
-	am, _ := monitoring.NewAlertManager(1*time.Second, "test_alerts.log", nil)
+	am, _ := NewAlertManager(1*time.Second, "test_alerts.log", nil)
 
 	id1 := correlation.Identity{ID: "target_1", Username: "ghost", Platform: "GitHub", Bio: "Old Bio"}
 	initialCluster := correlation.Cluster{

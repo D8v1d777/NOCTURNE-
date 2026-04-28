@@ -1,0 +1,13 @@
+# ML Scoring System Configuration
+
+model_version: "1.0.0"
+model_dir: "ml/models"
+model_filename: "logistic_regression_model.pkl"
+metadata_filename: "model_metadata.json"
+
+feature_store_db: "ml/feature_store.db"
+
+match_threshold: 0.75
+
+log_level: "INFO"
+log_file: "ml_scoring.log"

@@ -1,4 +1,4 @@
-package events
+package correlation
 
 import (
 	"sync"

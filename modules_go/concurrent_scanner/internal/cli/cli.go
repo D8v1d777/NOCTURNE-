@@ -1,13 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"nocturne/scanner/internal/correlation"
 	"nocturne/scanner/internal/engine"
 	"nocturne/scanner/internal/models"
-	"nocturne/scanner/internal/validation"
 	"nocturne/scanner/sources/external"
 	"nocturne/scanner/sources/username"
 	"os"
@@ -33,20 +34,21 @@ func (c *CLI) Run(args []string) {
 		return
 	}
 
+	ctx := context.Background() // Use a cancellable context in a real app
 	command := args[0]
 	switch command {
 	case "scan":
 		c.handleScan(args[1:])
 	case "test":
-		validation.RunValidationSuite()
+		RunValidationSuite()
 	case "monitor":
-		c.handleMonitor(args[1:])
+		c.handleMonitor(ctx, args[1:])
 	case "worker":
 		c.handleWorker(args[1:])
 	case "serve":
-		c.handleServe(args[1:])
+		c.handleServe()
 	case "correlate":
-		c.handleCorrelate(args[1:])
+		c.handleCorrelate()
 	case "help":
 		c.PrintGeneralHelp()
 	case "-h", "--help":
@@ -211,7 +213,7 @@ Examples:
   nocturne scan username shadow_user --json --output report.json`)
 }
 
-func (c *CLI) handleCorrelate(args []string) {
+func (c *CLI) handleCorrelate() {
 	fmt.Println("🧠 Running NOCTURNE Correlation Engine (Graph Mode)...")
 	fmt.Println(strings.Repeat("-", 45))
 
@@ -298,4 +300,76 @@ Flags:
   --output <file>    Save results to a specific file
   --enable-external  Enable external API-based plugins (default: false)
   --enable-rust      Enable future Rust-based modules (default: false)`)
+}
+
+func (c *CLI) handleMonitor(ctx context.Context, args []string) {
+	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
+	intervalStr := fs.String("interval", "5m", "Monitoring interval (e.g., 1m, 1h)")
+	alertLog := fs.String("alert-log", "alerts.log", "Path to alert log file")
+	targetsStr := fs.String("targets", "", "Comma-separated list of targets (usernames) to monitor")
+	fs.Parse(args)
+
+	interval, err := time.ParseDuration(*intervalStr)
+	if err != nil {
+		log.Fatalf("Invalid interval format: %v", err)
+	}
+
+	if *targetsStr == "" {
+		log.Fatal("Error: --targets is required for monitoring")
+	}
+	targets := strings.Split(*targetsStr, ",")
+
+	// Initialize components
+	bus := correlation.NewStreamBus()
+	alertManager, err := NewAlertManager(5*time.Minute, *alertLog, nil) // 5 min cooldown, no specific rules for now
+	if err != nil {
+		log.Fatalf("Failed to create AlertManager: %v", err)
+	}
+	defer alertManager.Close()
+
+	// Start alert manager consumer
+	alertManager.StartStreamConsumer(bus)
+
+	// The api.AnalysisCache is a global variable in the correlation package
+	// For now, we'll assume it's initialized elsewhere or can be accessed directly.
+	// If it needs explicit creation, it should be done here.
+	// For this context, correlation.Cache is not directly exposed, but it's used internally by the API.
+	// Let's create a dummy one for the scheduler if it's not meant to be global.
+	// Based on server.go, it's a global in correlation package.
+	// So, we need to pass a reference to it.
+	// However, the NewMonitoringScheduler expects *api.AnalysisCache.
+	// Let's assume a NewAnalysisCache function exists in api package or correlation package.
+	// Given the context, it's likely `correlation.Cache` is the intended one.
+	// But `NewMonitoringScheduler` expects `*api.AnalysisCache`.
+	// This implies `api.AnalysisCache` is a type, and `correlation.Cache` is an instance.
+	// Let's assume `api.NewAnalysisCache()` exists or we can pass `nil` for now if it's not critical for scheduler's direct use.
+	// Looking at `server.go`, `Cache` is a global `AnalysisCache` in the `correlation` package.
+	// So, `correlation.Cache` is the correct instance.
+	// The `NewMonitoringScheduler` expects `*api.AnalysisCache`. This is a type mismatch.
+	// I will assume `api.AnalysisCache` is the same as `correlation.AnalysisCache` and use `&correlation.Cache`.
+	// This might require a type alias or a change in `scheduler.go` if they are truly different.
+	// For now, I'll use `&correlation.Cache` and assume `api.AnalysisCache` is `correlation.AnalysisCache`.
+	// This is a potential point of future refactoring if `api.AnalysisCache` is a distinct type.
+	scheduler := NewMonitoringScheduler(alertManager, c.Manager, &correlation.Cache, bus, interval, targets)
+
+	scheduler.Start(ctx)
+
+	// Keep the CLI running until context is cancelled (e.g., Ctrl+C)
+	<-ctx.Done()
+	scheduler.Stop()
+	log.Println("Monitoring stopped.")
+}
+
+func (c *CLI) handleWorker(args []string) {
+	fs := flag.NewFlagSet("worker", flag.ExitOnError)
+	workerID := fs.String("id", fmt.Sprintf("worker-%d", time.Now().UnixNano()), "Unique ID for the worker")
+	masterAddr := fs.String("master", "http://localhost:8080", "Address of the Master node")
+	fs.Parse(args)
+
+	worker := NewWorker(*workerID, *masterAddr, c.Manager)
+	worker.Start() // This method blocks, so it should be run in a goroutine if other CLI tasks need to run
+}
+
+func (c *CLI) handleServe() {
+	correlation.StartServer() // This method blocks until shutdown signal
 }

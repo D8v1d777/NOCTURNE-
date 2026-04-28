@@ -1,14 +1,14 @@
-package api
+package correlation
 
 import (
-	"compress/gzip"
+	"context"
 	"encoding/json"
-	"io"
+	"log"
 	"net/http"
-	"nocturne/scanner/internal/correlation"
-	"strconv"
-	"strings"
+	"os"
+	"os/signal"
 	"sync"
+	"time"
 )
 
 // AnalysisCache stores results to prevent recomputing expensive correlation logic
@@ -18,159 +18,137 @@ type AnalysisCache struct {
 }
 
 type CachedResult struct {
-	Clusters         []correlation.Cluster
-	GraphEdges       []correlation.Edge // Flat list of all edges for graph visualization
-	PrimaryClusterID string             // ID of the cluster relevant to the target query
+	Clusters         []Cluster
+	GraphEdges       []Edge // Flat list of all edges for graph visualization
+	Timeline         Timeline
+	PrimaryClusterID string // ID of the cluster relevant to the target query
 	Expiry           int64
 }
 
-var Cache = &AnalysisCache{store: make(map[string]*CachedResult)} // Exported for scheduler access
-
-// RegisterHandlers sets up the API routes for the frontend bridge
-func RegisterHandlers() {
-	// Wrap handlers with Gzip compression for performance
-	http.HandleFunc("/api/graph", gzipWrapper(getGraphHandler))
-	http.HandleFunc("/api/timeline", gzipWrapper(getTimelineHandler))
-	http.HandleFunc("/api/behavior", gzipWrapper(getBehaviorHandler))
+// Cache is the global singleton for storing and retrieving analysis results.
+var Cache = AnalysisCache{
+	store: make(map[string]*CachedResult),
 }
 
-func gzipWrapper(fn http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			fn(w, r)
+// IngestRequest matches the Python scheduler's output format
+type IngestRequest struct {
+	TargetID string   `json:"target_id"`
+	Identity Identity `json:"identity"`
+}
+
+func StartServer() {
+	// Register Graph API
+	http.HandleFunc("/api/graph", handleGraph)
+
+	// Server config
+	port := getEnv("PORT", "8080")
+
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      nil, // uses http.DefaultServeMux
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in goroutine
+	go func() {
+		log.Printf("🕯️ NOCTURNE API running on http://localhost:%s\n", port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	// Graceful shutdown
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+
+	<-stop
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatalf("forced shutdown: %v", err)
+	}
+
+	log.Println("Server exited cleanly")
+}
+
+func handleGraph(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		target := r.URL.Query().Get("target")
+		Cache.mu.RLock()
+		res, exists := Cache.store[target]
+		Cache.mu.RUnlock()
+
+		if !exists {
+			http.Error(w, "Target not found", http.StatusNotFound)
 			return
 		}
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-		fn(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
-	}
-}
+		json.NewEncoder(w).Encode(res)
 
-type gzipResponseWriter struct {
-	io.Writer
-	http.ResponseWriter
-}
+	case http.MethodPost:
+		var req IngestRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
-func (w gzipResponseWriter) Write(b []byte) (int, error) {
-	return w.Writer.Write(b)
-}
+		// 1. Retrieve current state or create new
+		Cache.mu.Lock()
+		current, exists := Cache.store[req.TargetID]
 
-func getGraphHandler(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	target := query.Get("target")
-	if target == "" {
-		http.Error(w, "missing target parameter", http.StatusBadRequest)
-		return
-	}
+		var identities []Identity
+		if exists {
+			identities = FlattenIdentities(current.Clusters)
+		}
 
-	Cache.mu.RLock()
-	res, exists := Cache.store[target]
-	Cache.mu.RUnlock()
+		// 2. Add the new identity
+		identities = append(identities, req.Identity)
 
-	// Ensure cache hit and that data hasn't expired
-	if !exists || (res.Expiry > 0 && res.Expiry < strings.Index(target, "now")) { // simplified expiry check
-		http.Error(w, "no analysis found for target", http.StatusNotFound)
-		return
-	}
+		// 3. Re-run correlation to update the Graph and Clusters
+		clusters, edges := RunCorrelation(identities)
 
-	// Transform internal cluster structures into the format expected by Cytoscape.js
-	type Node struct {
-		ID         string  `json:"id"`
-		Label      string  `json:"label"`
-		Platform   string  `json:"platform"`
-		Confidence float64 `json:"confidence"`
-		Bio        string  `json:"bio"`
-	}
-	type Edge struct {
-		Source string  `json:"source"` // Node ID
-		Target string  `json:"target"` // Node ID
-		Weight float64 `json:"weight"`
-		Reason string  `json:"reason"`
-	}
+		// 4. Update the Cache
+		newResult := &CachedResult{
+			Clusters:   clusters,
+			GraphEdges: edges,
+			Expiry:     time.Now().Add(24 * time.Hour).Unix(),
+		}
 
-	graph := struct {
-		Nodes []Node `json:"nodes"`
-		Edges []Edge `json:"edges"`
-	}{Nodes: []Node{}, Edges: []Edge{}}
-
-	// Implement Pagination for massive clusters
-	limit, _ := strconv.Atoi(query.Get("limit"))
-	offset, _ := strconv.Atoi(query.Get("offset"))
-	if limit == 0 {
-		limit = 1000 // Default safety cap
-	}
-
-	allIdentities := correlation.FlattenIdentities(res.Clusters)
-	endNode := offset + limit
-	if endNode > len(allIdentities) {
-		endNode = len(allIdentities)
-	}
-
-	for i := offset; i < endNode; i++ {
-		member := allIdentities[i]
-		// Determine which cluster this member belongs to for confidence
-		var conf float64
-		for _, c := range res.Clusters {
-			for _, m := range c.Members {
-				if m.ID == member.ID {
-					conf = c.Confidence
-					break
+		// Identify the primary cluster (highest confidence)
+		if len(clusters) > 0 {
+			best := clusters[0]
+			for _, c := range clusters {
+				if c.Confidence > best.Confidence {
+					best = c
 				}
 			}
+			newResult.PrimaryClusterID = best.ID
+			newResult.Timeline = best.Timeline
 		}
-		graph.Nodes = append(graph.Nodes, Node{
-			ID:         member.ID,
-			Label:      member.Username,
-			Platform:   member.Platform,
-			Confidence: conf,
-			Bio:        member.Bio,
-		})
-	}
 
-	// Populate graph edges from cached GraphEdges
-	idMap := make(map[int]string)
-	for i, identity := range allIdentities {
-		idMap[i] = identity.ID
-	}
+		Cache.store[req.TargetID] = newResult
+		Cache.mu.Unlock()
 
-	// Edge pagination/filtering
-	for _, edge := range res.GraphEdges {
-		if edge.Weight < 0.6 { // Collapse low-confidence edges by default on backend
-			continue
-		}
-		graph.Edges = append(graph.Edges, Edge{
-			Source: idMap[edge.From],
-			Target: idMap[edge.To],
-			Weight: edge.Weight,
-			Reason: strings.Join(edge.Reasons, ", "),
-		})
-	}
+		log.Printf("Updated Graph for target [%s]: %d identities, %d clusters", req.TargetID, len(identities), len(clusters))
+		w.WriteHeader(http.StatusAccepted)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(graph)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
-func getTimelineHandler(w http.ResponseWriter, r *http.Request) {
-	target := r.URL.Query().Get("target")
-	Cache.mu.RLock()
-	res, exists := Cache.store[target]
-	Cache.mu.RUnlock()
+// =======================
+// UTIL
+// =======================
 
-	if !exists {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+func getEnv(key, fallback string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(res.Timeline)
-}
-
-func getBehaviorHandler(w http.ResponseWriter, r *http.Request) {
-	target := r.URL.Query().Get("target")
-	Cache.mu.RLock()
-	res, _ := Cache.store[target]
-	Cache.mu.RUnlock()
-
-	json.NewEncoder(w).Encode(res.Timeline.Profile)
+	return fallback
 }

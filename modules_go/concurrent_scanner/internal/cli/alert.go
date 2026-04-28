@@ -1,4 +1,4 @@
-package monitoring
+package cli
 
 import (
 	"fmt"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"nocturne/scanner/internal/correlation"
-	"nocturne/scanner/internal/events"
 )
 
 // AlertType defines the category of an alert
@@ -86,9 +85,9 @@ func NewAlertManager(cooldown time.Duration, logFilePath string, rules []AlertRu
 }
 
 // StartStreamConsumer begins listening for correlation events to process alerts
-func (am *AlertManager) StartStreamConsumer(bus *events.StreamBus) {
+func (am *AlertManager) StartStreamConsumer(bus *correlation.StreamBus) {
 	go func() {
-		eventChan := bus.Subscribe(events.TopicCorrelationEvent)
+		eventChan := bus.Subscribe(correlation.TopicCorrelationEvent)
 		log.Println("AlertManager started consuming correlation_events")
 
 		for event := range eventChan {
@@ -125,8 +124,8 @@ func (am *AlertManager) ProcessClusterChange(targetID string, currentCluster *co
 
 	// If no previous snapshot, this is the first observation
 	if !exists {
-		am.previousSnapshots[targetID] = ClusterSnapshot{Cluster: currentCluster, Timeline: currentCluster.Timeline}
-		am.emitInitialAlerts(targetID, currentCluster)
+		am.previousSnapshots[targetID] = ClusterSnapshot{Cluster: *currentCluster, Timeline: currentCluster.Timeline}
+		am.emitInitialAlerts(targetID, *currentCluster)
 		return
 	}
 

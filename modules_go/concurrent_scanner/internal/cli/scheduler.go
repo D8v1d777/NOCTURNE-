@@ -1,11 +1,10 @@
-package monitoring
+package cli
 
 import (
 	"context"
 	"log"
-	"nocturne/scanner/internal/api"
+	"nocturne/scanner/internal/correlation"
 	"nocturne/scanner/internal/engine"
-	"nocturne/scanner/internal/events"
 	"sync"
 	"time"
 )
@@ -13,9 +12,9 @@ import (
 // MonitoringScheduler orchestrates periodic scans and feeds results to the AlertManager
 type MonitoringScheduler struct {
 	alertManager  *AlertManager
-	scanner       *engine.Manager    // The main scanning engine
-	apiCache      *api.AnalysisCache // The cache to store and retrieve previous states
-	bus           *events.StreamBus
+	scanner       *engine.Manager            // The main scanning engine
+	apiCache      *correlation.AnalysisCache // The cache to store and retrieve previous states
+	bus           *correlation.StreamBus
 	interval      time.Duration
 	maxInterval   time.Duration // For adaptive scheduling
 	targets       []string      // List of targets (e.g., usernames) to monitor
@@ -26,7 +25,7 @@ type MonitoringScheduler struct {
 }
 
 // NewMonitoringScheduler creates a new scheduler
-func NewMonitoringScheduler(am *AlertManager, scanner *engine.Manager, apiCache *api.AnalysisCache, bus *events.StreamBus, interval time.Duration, targets []string) *MonitoringScheduler {
+func NewMonitoringScheduler(am *AlertManager, scanner *engine.Manager, apiCache *correlation.AnalysisCache, bus *correlation.StreamBus, interval time.Duration, targets []string) *MonitoringScheduler {
 	return &MonitoringScheduler{
 		alertManager:  am,
 		scanner:       scanner,
@@ -105,6 +104,6 @@ func (ms *MonitoringScheduler) monitorTarget(target string) {
 	}
 
 	// 2. Produce to Stream: Push raw data into the pipeline
-	ms.bus.Publish(events.TopicRawData, target, scanResults)
+	ms.bus.Publish(correlation.TopicRawData, target, scanResults)
 	log.Printf("Published raw_data for %s to stream", target)
 }

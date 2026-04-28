@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"fmt"
 	"log"
 	"nocturne/scanner/internal/models"
 	"sync"
@@ -31,7 +30,7 @@ func (m *Manager) Register(p models.Source) {
 func (m *Manager) RunPlugins(input string, enabled []string) []models.Result {
 	var wg sync.WaitGroup
 	resultChan := make(chan []models.Result, len(enabled))
-	
+
 	enabledMap := make(map[string]bool)
 	for _, name := range enabled {
 		enabledMap[name] = true
@@ -46,7 +45,7 @@ func (m *Manager) RunPlugins(input string, enabled []string) []models.Result {
 		wg.Add(1)
 		go func(p models.Source) {
 			defer wg.Done()
-			
+
 			// Protect the main engine from plugin crashes
 			defer func() {
 				if r := recover(); r != nil {
@@ -92,7 +91,7 @@ func (m *Manager) RunPlugins(input string, enabled []string) []models.Result {
 func (m *Manager) GetAvailablePlugins() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	var names []string
 	for name := range m.plugins {
 		names = append(names, name)

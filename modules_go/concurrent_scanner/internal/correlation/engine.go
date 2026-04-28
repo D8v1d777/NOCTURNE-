@@ -25,26 +25,21 @@ func Compare(a, b Identity) (float64, []string, []string) {
 	uSim := LevenshteinDistance(a.NormalizedUsername, b.NormalizedUsername)
 
 	hasSharedLink := false
-	for la := range a.Links {
-		if _, exists := b.Links[la]; exists {
-			hasSharedLink = true
+	for _, la := range a.Links {
+		for _, lb := range b.Links {
+			if la == lb {
+				hasSharedLink = true
+				break
+			}
+		}
+		if hasSharedLink {
 			break
 		}
 	}
 	if !hasSharedLink {
-		for la := range a.Links {
-			da := extractDomain(la)
-			if da == "" {
-				continue
-			}
-			for lb := range b.Links {
-				db := extractDomain(lb)
-				if da == db {
-					hasSharedLink = true
-					break
-				}
-			}
-			if hasSharedLink {
+		for da := range a.LinkDomains {
+			if _, exists := b.LinkDomains[da]; exists {
+				hasSharedLink = true
 				break
 			}
 		}
@@ -75,7 +70,6 @@ func Compare(a, b Identity) (float64, []string, []string) {
 
 	score := 0.0
 	var reasons []string
-	hasStrongSignal := isExactUsername || hasAvatarMatch || hasSharedLink
 
 	// 1. Username Scoring (Hybrid ML + Rule-based)
 	rarity := GetUsernameRarity(a.Username)
@@ -126,33 +120,28 @@ func Compare(a, b Identity) (float64, []string, []string) {
 	// 3. Shared Links Scoring (Dynamic)
 	if hasSharedLink {
 		linkFound := false
-		for la := range a.Links {
-			if _, exists := b.Links[la]; exists {
-				weight := 0.4 * feedback.GetAdjustment("exact shared link")
-				score += weight
-				reasons = append(reasons, "exact shared link: "+la)
-				linkFound = true
+		for _, la := range a.Links {
+			for _, lb := range b.Links {
+				if la == lb {
+					weight := 0.4 * feedback.GetAdjustment("exact shared link")
+					score += weight
+					reasons = append(reasons, "exact shared link: "+la)
+					linkFound = true
+					break
+				}
+			}
+			if linkFound {
 				break
 			}
 		}
 		if !linkFound {
 			// Check domains since we know there's a domain match from gating
-			for la := range a.Links {
-				da := extractDomain(la)
-				if da == "" {
-					continue
-				}
-				for lb := range b.Links {
-					db := extractDomain(lb)
-					if da == db {
-						weight := 0.15 * feedback.GetAdjustment("shared link domain")
-						score += weight
-						reasons = append(reasons, "shared link domain: "+da)
-						linkFound = true
-						break
-					}
-				}
-				if linkFound {
+			for da := range a.LinkDomains {
+				if _, exists := b.LinkDomains[da]; exists {
+					weight := 0.15 * feedback.GetAdjustment("shared link domain")
+					score += weight
+					reasons = append(reasons, "shared link domain: "+da)
+					linkFound = true
 					break
 				}
 			}
@@ -186,6 +175,16 @@ func Compare(a, b Identity) (float64, []string, []string) {
 		// Strong penalty for different bios when username matches
 		score -= 0.4
 		rejectionReasons = append(rejectionReasons, "conflicting bio content")
+	}
+
+	// 5. Cross-Reference Engine: Intelligence Atoms
+	// Check for metadata matches (Email/Phone/Location extracted by Python)
+	for key, valA := range a.Metadata {
+		if valB, ok := b.Metadata[key]; ok && valA == valB && valA != "" {
+			weight := 0.3 * feedback.GetAdjustment("cross-reference match")
+			score += weight
+			reasons = append(reasons, fmt.Sprintf("cross-reference match: %s", key))
+		}
 	}
 
 	// Final normalization: clamp between 0 and 1

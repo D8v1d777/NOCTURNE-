@@ -1,0 +1,26 @@
+{
+  "sources": [
+    {
+      "id": "opencorporates",
+      "type": "api",
+      "method": "GET",
+      "url_template": "https://api.opencorporates.com/v0.4/companies/search?q={query}",
+      "rate_limit": 2
+    },
+    {
+      "id": "github",
+      "type": "api",
+      "method": "GET",
+      "url_template": "https://api.github.com/search/users?q={query}",
+      "rate_limit": 2
+    }
+    ,
+    {
+      "id": "reddit",
+      "type": "api",
+      "method": "GET",
+      "url_template": "https://www.reddit.com/search.json?q={query}",
+      "rate_limit": 2
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "opencorporates": {
+    "id": "opencorporates",
+    "category": "corporate",
+    "type": "scrape",
+    "last_crawled": "2024-05-20T14:30:00Z",
+    "status": "active",
+    "reliability_score": 1.0,
+    "capabilities": {
+      "supports_name": true,
+      "supports_email": false
+    },
+    "change_frequency": 0.3
+  },
+  "github_users": {
+    "id": "github_users",
+    "category": "social",
+    "type": "api",
+    "last_crawled": "2024-05-20T14:35:00Z",
+    "status": "active",
+    "reliability_score": 0.95,
+    "capabilities": { "supports_name": true, "supports_email": true },
+    "change_frequency": 0.8
+  }
+}

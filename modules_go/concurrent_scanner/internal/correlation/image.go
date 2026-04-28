@@ -3,17 +3,12 @@ package correlation
 import (
 	"fmt"
 	"image"
-	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/nfnt/resize" // Note: While I try to avoid dependencies, resize is standard for this task. 
-	// If I can't use it, I'll implement a very basic downsampler.
-	// Actually, I'll implement a basic bilinear scaler to stay dependency-free as requested.
 )
 
 var (
@@ -69,7 +64,7 @@ func GetImageHash(url string) (string, error) {
 func calculateAHash(img image.Image) string {
 	// Resize to 8x8
 	resized := resize8x8(img)
-	
+
 	// Convert to Grayscale and find average
 	pixels := make([]uint32, 64)
 	var sum uint32
@@ -100,7 +95,7 @@ func resize8x8(img image.Image) image.Image {
 	res := image.NewRGBA(image.Rect(0, 0, 8, 8))
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
-	
+
 	for y := 0; y < 8; y++ {
 		for x := 0; x < 8; x++ {
 			srcX := x * w / 8

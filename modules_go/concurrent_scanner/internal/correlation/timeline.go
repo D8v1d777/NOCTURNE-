@@ -42,14 +42,6 @@ type Timeline struct {
 	StrategicInsights []StrategicInsight `json:"strategic_insights"`
 }
 
-type IdentityChange struct {
-	Type      string    `json:"type"`
-	Old       string    `json:"old"`
-	New       string    `json:"new"`
-	Timestamp time.Time `json:"timestamp"`
-	Platform  string    `json:"platform"`
-}
-
 type Prediction struct {
 	Type          string    `json:"type"`
 	Probability   float64   `json:"probability"`
